@@ -16,6 +16,7 @@ import java.net.URLEncoder
 
 class VKNotifier[F[_]: Async](
   accessToken: String,
+  ownerId: String,
   peerId: String,
   client: Client[F],
   itemPrinter: RowItem => String = VKNotifier.defaultItemPrinter("")
@@ -161,7 +162,7 @@ class VKNotifier[F[_]: Async](
 
       response <- sendMessage(
         itemPrinter(item.item),
-        Map("attachment" -> photoIds.map(id => s"photo-201659292_$id").mkString(","))
+        Map("attachment" -> photoIds.map(id => s"photo${ownerId}_$id").mkString(","))
       )
       _ <- if (response.isLeft) reportError(response.left.getOrElse("")) else Async[F].unit
     } yield ()
@@ -183,6 +184,6 @@ object VKNotifier {
       else "your"
 
     item =>
-      s"New ad that fits $yourString predicate was just posted\n${dataPrinter(item.data)}\n${item.url}"
+      s"New ad that fits $yourString predicate just was posted\n${dataPrinter(item.data)}\n${item.url}"
   }
 }

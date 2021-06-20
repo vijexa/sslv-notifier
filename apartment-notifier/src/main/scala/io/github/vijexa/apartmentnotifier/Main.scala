@@ -14,6 +14,7 @@ import scala.concurrent.duration._
 
 class Config(arguments: Seq[String]) extends ScallopConf(arguments) {
   val accessToken = opt[String](required = true)
+  val ownerId = opt[String](required = true)
   val peerId = opt[String](required = true)
   val userId = opt[String]()
   val period = opt[Int]()
@@ -59,6 +60,7 @@ object Main extends IOApp {
           },
           new VKNotifier[IO](
             config.accessToken(),
+            config.ownerId(),
             config.peerId(),
             client,
             VKNotifier.defaultItemPrinter(config.userId.getOrElse(""))
