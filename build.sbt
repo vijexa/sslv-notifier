@@ -10,7 +10,8 @@ lazy val `sslv-notifier` = (project in file("sslv-notifier"))
       "io.circe" %% "circe-core" % circeV,
       "io.circe" %% "circe-parser" % circeV,
       "io.circe" %% "circe-generic" % circeV,
-      "org.typelevel" %% "cats-effect" % "3.1.1"
+      "org.typelevel" %% "cats-effect" % "3.1.1",
+      "ch.qos.logback" % "logback-classic" % "1.2.3"
     ),
     name := "sslv-notifier",
     organization := "io.github.vijexa",

@@ -7,13 +7,15 @@ import cats.implicits._
 import net.ruippeixotog.scalascraper.browser.JsoupBrowser
 import net.ruippeixotog.scalascraper.dsl.DSL.Extract._
 import net.ruippeixotog.scalascraper.dsl.DSL._
+import org.http4s.client.Client
 
 import scala.concurrent.duration._
 
 final class DataGetter[F[_]: Async](
   url: String,
   filterFunction: RowItem => Boolean,
-  notifierFunction: NotifierFunction[F]
+  notifierFunction: NotifierFunction[F],
+  client: Client[F]
 ) {
 
   private val browser = JsoupBrowser()
@@ -68,6 +70,30 @@ final class DataGetter[F[_]: Async](
       }
   }
 
+  private def getPics(item: RowItem): F[Either[String, List[List[Byte]]]] = {
+    val pics: EitherT[F, String, List[List[Byte]]] = for {
+      doc <- EitherT.liftF(Async[F].delay(browser.get(item.url)))
+
+      thumbnailUrlElements <- EitherT.fromOption[F](
+        doc >?> elementList(".pic_dv_thumbnail a"),
+        "can't find thumbnail <a> elements"
+      )
+
+      thumbnailUrls = thumbnailUrlElements.map(_.attr("href"))
+
+      _ <- printlnET(s"thumbnail urls: $thumbnailUrls")
+
+      pics <- EitherT.liftF(
+        thumbnailUrls
+          .map(url => client.get(url)(r => r.body.compile.toList))
+          .sequence
+      )
+
+    } yield pics
+
+    pics.value
+  }
+
   private def process(state: Ref[F, List[String]], period: FiniteDuration): F[Unit] = for {
     rowsEither <- getRows.handleError(x => Left(x.toString))
 
@@ -87,9 +113,23 @@ final class DataGetter[F[_]: Async](
     filteredRows = newRows.filter(filterFunction)
     _ <- printlnF(s"${filteredRows.length} records pass filtering predicate")
 
+    _ <- printlnF("getting pics...")
+    picsEithers <- filteredRows.map(getPics).sequence
+    pics <- picsEithers.map {
+      case Left(error) =>
+        printlnF(s"error occured when fetching pics: $error") *> Async[F].delay(
+          List.empty[List[Byte]]
+        )
+      case Right(value) => Async[F].delay(value)
+    }.sequence
+
+    rowsWithPics = filteredRows.zip(pics).map { case (item, p) =>
+      RowItemWithPics(item, p)
+    }
+
     _ <-
       if (filteredRows.length > 0)
-        printlnF("notifying user...") *> filteredRows.map(notifierFunction.notify).sequence
+        printlnF("notifying user...") *> rowsWithPics.map(x => notifierFunction.notify(x)).sequence
       else Async[F].unit
 
     _ <- Async[F].sleep(period)

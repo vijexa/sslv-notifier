@@ -62,7 +62,8 @@ object Main extends IOApp {
             config.peerId(),
             client,
             VKNotifier.defaultItemPrinter(config.userId.getOrElse(""))
-          )
+          ),
+          client
         ).startProcessing(config.period.getOrElse(30).seconds)
       )
     } yield ExitCode.Success
