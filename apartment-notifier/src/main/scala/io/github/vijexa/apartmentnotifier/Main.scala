@@ -31,9 +31,15 @@ object Main extends IOApp {
   def run(args: List[String]): IO[ExitCode] = {
     val numRegex = """.*?(\d+).*""".r
     val config = new Config(args)
+    val timeout = 3600.seconds
 
     val resource = for {
-      client <- BlazeClientBuilder[IO](global).resource
+      client <- BlazeClientBuilder[IO](global)
+        .withResponseHeaderTimeout(timeout)
+        .withConnectTimeout(timeout)
+        .withIdleTimeout(timeout)
+        .withRequestTimeout(timeout)
+        .resource
 
       _ <- Resource.eval(
         new DataGetter[IO](
