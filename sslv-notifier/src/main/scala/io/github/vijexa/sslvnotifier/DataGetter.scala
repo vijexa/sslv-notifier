@@ -72,6 +72,8 @@ final class DataGetter[F[_]: Async](
 
   private def getPics(item: RowItem): F[Either[String, List[List[Byte]]]] = {
     val pics: EitherT[F, String, List[List[Byte]]] = for {
+      _ <- printlnET("getting pics...")
+
       doc <- EitherT.liftF(Async[F].delay(browser.get(item.url)))
 
       thumbnailUrlElements <- EitherT.fromOption[F](
@@ -113,7 +115,6 @@ final class DataGetter[F[_]: Async](
     filteredRows = newRows.filter(filterFunction)
     _ <- printlnF(s"${filteredRows.length} records pass filtering predicate")
 
-    _ <- printlnF("getting pics...")
     picsEithers <- filteredRows.map(getPics).sequence
     pics <- picsEithers.map {
       case Left(error) =>

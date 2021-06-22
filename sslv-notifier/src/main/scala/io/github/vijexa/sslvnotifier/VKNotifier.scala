@@ -1,11 +1,13 @@
 package io.github.vijexa.sslvnotifier
 
-import cats.effect.kernel.Async
+import cats.data.EitherT
+import cats.effect.kernel._
 import cats.implicits._
 import io.circe.Decoder
 import io.circe.generic.semiauto.deriveDecoder
 import io.circe.parser.decode
 import org.http4s._
+import org.http4s.circe.decodeUri
 import org.http4s.client.Client
 import org.http4s.client.dsl.Http4sClientDsl
 import org.http4s.headers._
@@ -26,7 +28,7 @@ class VKNotifier[F[_]: Async](
   case class SendMessageR(response: Long)
   implicit val sendMessageResponseDecoder: Decoder[SendMessageR] = deriveDecoder
 
-  case class PhotoGetMessagesUploadServerRResponse(upload_url: String)
+  case class PhotoGetMessagesUploadServerRResponse(upload_url: Uri)
   implicit val photoGetMessagesUploadServerResponseDecoder =
     deriveDecoder[PhotoGetMessagesUploadServerRResponse]
   case class PhotoGetMessagesUploadServerR(response: PhotoGetMessagesUploadServerRResponse)
@@ -82,8 +84,8 @@ class VKNotifier[F[_]: Async](
       _.response
     )
 
-  protected def photoGetMessagesUploadServer: F[Either[String, String]] =
-    makeGetRequest[PhotoGetMessagesUploadServerR, String](
+  protected def photoGetMessagesUploadServer: F[Either[String, Uri]] =
+    makeGetRequest[PhotoGetMessagesUploadServerR, Uri](
       generateUri("photos.getMessagesUploadServer"),
       _.toString,
       _.response.upload_url
@@ -114,56 +116,77 @@ class VKNotifier[F[_]: Async](
     )
   )
 
-  def notify(item: RowItemWithPics): F[Unit] = {
+  private def uploadPhotos(photos: List[List[Byte]]): F[Either[String, List[String]]] = {
+    val photoIdsEitherT: EitherT[F, String, List[String]] = for {
+      uploadServer <- EitherT(photoGetMessagesUploadServer)
 
-    for {
-      uploadServerEither <- photoGetMessagesUploadServer
-      // TODO: fix
-      uploadServer = uploadServerEither.fold(identity, identity)
+      _ <- printlnET(s"upload server: $uploadServer")
 
-      _ <- printlnF(s"upload server: $uploadServer")
-
-      uri = Uri.unsafeFromString(uploadServer)
-
-      _ <- printlnF(s"uri: $uri")
-
-      requests = item.pics.map { pic =>
+      requests = photos.map { pic =>
         val multipart = generateMultipart(pic)
 
         Method
-          .POST(multipart, uri)
+          .POST(multipart, uploadServer)
           .withHeaders(multipart.headers)
       }
 
-      uploadedResponses <- requests
-        .map(req =>
-          client.run(req).use(decodeResponse[PhotoUploadR, PhotoUploadR](_.toString, identity))
+      uploadedResponsesEithers <- EitherT
+        .liftF(
+          requests
+            .map(req =>
+              client.run(req).use(decodeResponse[PhotoUploadR, PhotoUploadR](_.toString, identity))
+            )
+            .sequence
         )
-        .sequence
 
-      savedResponses <- uploadedResponses
-        .map[F[Option[Either[String, String]]]] {
-          case Left(error) =>
-            printlnF(s"error when uploading photo: $error") as None
-          case Right(value) =>
-            photoSaveMessagesPhoto(value.server.toString, value.photo, value.hash).map(Some(_))
+      savedResponsesEithers <- EitherT.liftF(
+        uploadedResponsesEithers
+          .map[F[Option[Either[String, String]]]] {
+            case Left(error) =>
+              printlnF(s"error when uploading photo: $error") as None
+            case Right(value) =>
+              photoSaveMessagesPhoto(value.server.toString, value.photo, value.hash).map(Some(_))
+          }
+          .sequence
+          .map(_.flatten)
+      )
+
+      photoIds <- EitherT.liftF(
+        savedResponsesEithers
+          .map[F[Option[String]]] {
+            case Left(error) => printlnF(s"error when saving photo: $error") as None
+            case Right(value) =>
+              printlnF(s"photo $value saved and uploaded successfully") as Some(value)
+          }
+          .sequence
+          .map(_.flatten)
+      )
+
+    } yield photoIds
+
+    photoIdsEitherT.value
+  }
+
+  def notify(item: RowItemWithPics): F[Unit] = {
+
+    for {
+      photoIds <- uploadPhotos(item.pics)
+        .handleError(err =>
+          s"photo uploading completely blew up with following exception: $err".asLeft
+        )
+        .flatMap[Option[List[String]]] {
+          case Left(error) => printlnF(s"photo uploading failed completely: $error") as None
+          case Right(value) => Sync[F].delay(Some(value))
         }
-        .sequence
-        .map(_.flatten)
-
-      photoIds <- savedResponses
-        .map[F[Option[String]]](_ match {
-          case Left(error) => printlnF(s"error when saving photo: $error") as None
-          case Right(value) =>
-            printlnF(s"photo $value saved and uploaded successfully") as Some(value)
-        })
-        .sequence
-        .map(_.flatten)
 
       response <- sendMessage(
         itemPrinter(item.item),
-        Map("attachment" -> photoIds.map(id => s"photo${ownerId}_$id").mkString(","))
+        photoIds match {
+          case Some(ids) => Map("attachment" -> ids.map(id => s"photo${ownerId}_$id").mkString(","))
+          case None => Map()
+        }
       )
+
       _ <- if (response.isLeft) reportError(response.left.getOrElse("")) else Async[F].unit
     } yield ()
   }
