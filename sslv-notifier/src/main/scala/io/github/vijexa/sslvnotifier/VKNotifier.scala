@@ -185,7 +185,7 @@ class VKNotifier[F[_]: Async](
           case Some(ids) => Map("attachment" -> ids.map(id => s"photo${ownerId}_$id").mkString(","))
           case None => Map()
         }
-      )
+      ).handleError(err => Left(err.toString))
 
       _ <- if (response.isLeft) reportError(response.left.getOrElse("")) else Async[F].unit
     } yield ()
