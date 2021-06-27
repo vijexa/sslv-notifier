@@ -39,6 +39,7 @@ object Main extends IOApp {
         .withConnectTimeout(timeout)
         .withIdleTimeout(timeout)
         .withRequestTimeout(timeout)
+        .withSocketReuseAddress(true)
         .resource
 
       _ <- Resource.eval(

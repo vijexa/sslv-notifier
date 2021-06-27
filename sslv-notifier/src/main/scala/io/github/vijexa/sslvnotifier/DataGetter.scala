@@ -106,10 +106,11 @@ final class DataGetter[F[_]: Async](
 
     newRows <- state.modify { seenIds =>
       val newRows = rows.filterNot(row => seenIds.contains(row.id))
-      val newState = seenIds ++ newRows.map(_.id)
+      val newIds = newRows.map(_.id)
+      val newState = seenIds ++ newIds
 
-      (newState, newRows)
-    }
+      (newState, StateStorer.saveIds(newIds) as newRows)
+    }.flatten
     _ <- printlnF(s"got ${newRows.length} new rows")
 
     filteredRows = newRows.filter(filterFunction)
@@ -139,6 +140,10 @@ final class DataGetter[F[_]: Async](
 
   def startProcessing(period: FiniteDuration): F[Unit] = for {
     state <- Ref.of[F, List[String]](List.empty)
+    recoveredIds <- StateStorer.getIds
+    _ <- state.set(recoveredIds.toList)
+    _ <- printlnF(s"recovered ids: $recoveredIds")
+    _ <- notifierFunction.reportError("sslv-notifier has started. It may have crashed.")
     _ <- process(state, period)
   } yield ()
 }
