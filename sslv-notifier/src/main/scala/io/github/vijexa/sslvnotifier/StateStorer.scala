@@ -15,6 +15,6 @@ object StateStorer {
     Sync[F].blocking(file.append(ids.mkString("\n")))
 
   def getIds[F[_]: Sync]: F[List[String]] =
-    Sync[F].blocking(file.contentAsString.split("\n").toList)
+    Sync[F].blocking(if (file.exists) file.contentAsString.split("\n").toList else List())
 
 }
